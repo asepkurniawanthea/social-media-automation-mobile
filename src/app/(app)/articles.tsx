@@ -1,8 +1,11 @@
 import { api } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
+import { useRouter, type Href } from "expo-router";
+import { Pencil, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   RefreshControl,
@@ -48,6 +51,8 @@ const FILTERS: { value: StatusFilter; label: string }[] = [
 const LIMIT = 10;
 
 export default function ArticlesScreen() {
+  const router = useRouter();
+
   const [articles, setArticles] = useState<Article[]>([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -55,6 +60,7 @@ export default function ArticlesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -91,7 +97,7 @@ export default function ArticlesScreen() {
         setError(null);
       } catch (err: unknown) {
         if (id !== requestId.current) return;
-        setError(getErrorMessage(err, "Gagal memuat artikel."));
+        setError(getErrorMessage(err, "Failed to load articles."));
       } finally {
         if (id === requestId.current) {
           setLoading(false);
@@ -120,6 +126,43 @@ export default function ArticlesScreen() {
     void load(page + 1, true);
   };
 
+  const openForm = (id?: number) => {
+    router.push({
+      pathname: "/user-form",
+      params: id !== undefined ? { id: String(id) } : {},
+    } as Href);
+  };
+
+  const doDelete = async (article: Article) => {
+    setDeletingId(article.id);
+    try {
+      await api.delete(`/articles/${article.id}`);
+      await load(1, false);
+    } catch (err: unknown) {
+      Alert.alert(
+        "Failed to delete",
+        getErrorMessage(err, "Failed to delete article."),
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const confirmDelete = (article: Article) => {
+    Alert.alert(
+      "Delete Article",
+      `Are you sure you want to delete ${article.title}? This action cannot be undone.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Delete",
+          style: "destructive",
+          onPress: () => void doDelete(article),
+        },
+      ],
+    );
+  };
+
   const renderItem = ({ item }: { item: Article }) => {
     const s = STATUS_STYLE[item.status] ?? {
       label: "Unknown",
@@ -137,7 +180,10 @@ export default function ArticlesScreen() {
           </View>
         </View>
         <Text style={styles.title} numberOfLines={2}>
-          {item.title ?? item.url}
+          {item.title}
+        </Text>
+        <Text style={styles.meta} numberOfLines={1}>
+          {item.url}
         </Text>
         <Text style={styles.meta} numberOfLines={1}>
           {item.author ?? "-"} ·{" "}
@@ -145,6 +191,32 @@ export default function ArticlesScreen() {
             ? new Date(item.published_at).toLocaleDateString("id-ID")
             : "-"}
         </Text>
+
+        <View style={styles.actions}>
+          <Pressable
+            onPress={() => openForm(item.id)}
+            style={[styles.actionBtn, styles.editBtn]}
+            hitSlop={6}
+          >
+            <Pencil size={16} color="#475569" />
+          </Pressable>
+          <Pressable
+            onPress={() => confirmDelete(item)}
+            disabled={deletingId !== null}
+            style={[
+              styles.actionBtn,
+              styles.deleteBtn,
+              deletingId !== null && styles.actionDisabled,
+            ]}
+            hitSlop={6}
+          >
+            {deletingId === item.id ? (
+              <ActivityIndicator size="small" color="#dc2626" />
+            ) : (
+              <Trash2 size={16} color="#dc2626" />
+            )}
+          </Pressable>
+        </View>
       </View>
     );
   };
@@ -155,7 +227,7 @@ export default function ArticlesScreen() {
         style={styles.search}
         value={search}
         onChangeText={setSearch}
-        placeholder="Cari url, judul, atau penulis..."
+        placeholder="Search url or title..."
         autoCapitalize="none"
         autoCorrect={false}
         returnKeyType="search"
@@ -184,7 +256,7 @@ export default function ArticlesScreen() {
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{error}</Text>
           <Pressable onPress={onRefresh}>
-            <Text style={styles.retry}>Coba lagi</Text>
+            <Text style={styles.retry}>Retry</Text>
           </Pressable>
         </View>
       )}
@@ -204,7 +276,7 @@ export default function ArticlesScreen() {
           onEndReachedThreshold={0.4}
           ListEmptyComponent={
             !error ? (
-              <Text style={styles.empty}>Data tidak ditemukan.</Text>
+              <Text style={styles.empty}>Data is empty.</Text>
             ) : undefined
           }
           ListFooterComponent={
@@ -233,6 +305,7 @@ const styles = StyleSheet.create({
   },
   filters: {
     flexDirection: "row",
+    flexWrap: "wrap",
     gap: 8,
     paddingHorizontal: 16,
     marginTop: 10,
@@ -246,19 +319,51 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: "#2563eb" },
   chipText: { fontSize: 13, color: "#334155", fontWeight: "500" },
   chipTextActive: { color: "#fff" },
-  list: { padding: 16, gap: 10 },
-  card: { backgroundColor: "#fff", borderRadius: 12, padding: 14, gap: 6 },
-  cardTop: {
+  // paddingBottom besar agar item terakhir tidak tertutup tombol tambah
+  list: { padding: 16, paddingBottom: 96, gap: 10 },
+  card: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    padding: 14,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    gap: 8,
+    gap: 12,
   },
-  source: { flex: 1, fontSize: 12, color: "#64748b" },
+  cardBody: { flex: 1, gap: 6 },
+  title: { fontSize: 15, fontWeight: "600", color: "#0f172a" },
+  metaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
   badgeText: { fontSize: 11, fontWeight: "600" },
-  title: { fontSize: 15, fontWeight: "600", color: "#0f172a" },
   meta: { fontSize: 12, color: "#64748b" },
+  actions: { flexDirection: "row", gap: 8 },
+  actionBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  editBtn: { borderColor: "#cbd5e1" },
+  deleteBtn: { borderColor: "#fecaca" },
+  actionDisabled: { opacity: 0.4 },
+  fab: {
+    position: "absolute",
+    right: 20,
+    bottom: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: "#2563eb",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.25,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 5,
+  },
+  fabPressed: { opacity: 0.8 },
   empty: { textAlign: "center", color: "#64748b", marginTop: 40 },
   errorBox: {
     backgroundColor: "#fef2f2",
@@ -273,4 +378,11 @@ const styles = StyleSheet.create({
   },
   errorText: { flex: 1, color: "#dc2626", fontSize: 13 },
   retry: { color: "#2563eb", fontWeight: "600" },
+  cardTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 8,
+  },
+  source: { flex: 1, fontSize: 12, color: "#64748b" },
 });

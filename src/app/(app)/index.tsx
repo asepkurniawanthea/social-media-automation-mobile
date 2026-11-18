@@ -57,8 +57,7 @@ export default function MenuScreen() {
         contentContainerStyle={styles.list}
         ListEmptyComponent={
           <Text style={styles.empty}>
-            Role akun tidak dikenali, sehingga tidak ada menu yang tersedia.
-            Hubungi admin.
+            No menu items available for your role.
           </Text>
         }
       />
