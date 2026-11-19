@@ -1,7 +1,7 @@
 import { api } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
-import { useRouter, type Href } from "expo-router";
-import { Pencil, Trash2 } from "lucide-react-native";
+import { useFocusEffect, useRouter, type Href } from "expo-router";
+import { Eye, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react-native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -32,6 +32,12 @@ interface Article {
 interface ApiResponse<T> {
   data: T;
   meta: { currentPage: number; totalPages: number; totalItems: number };
+}
+
+interface ScrapeResult {
+  id: number;
+  status: StatusFilter;
+  error: string | null;
 }
 
 const STATUS_STYLE: Record<Status, { label: string; bg: string; fg: string }> =
@@ -65,6 +71,12 @@ export default function ArticlesScreen() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
+
+  const [scrapingId, setScrapingId] = useState<number | null>(null);
+  const [notice, setNotice] = useState<{
+    type: "success" | "error";
+    text: string;
+  } | null>(null);
 
   // Mencegah respons lama menimpa respons yang lebih baru
   // (mis. saat mengetik cepat atau mengganti filter).
@@ -109,11 +121,12 @@ export default function ArticlesScreen() {
     [debouncedSearch, status],
   );
 
-  // Muat ulang dari halaman 1 setiap pencarian atau filter berubah.
-  useEffect(() => {
-    setLoading(true);
-    void load(1, false);
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      setLoading(true);
+      void load(1, false);
+    }, [load]),
+  );
 
   const onRefresh = () => {
     setRefreshing(true);
@@ -128,7 +141,14 @@ export default function ArticlesScreen() {
 
   const openForm = (id?: number) => {
     router.push({
-      pathname: "/user-form",
+      pathname: "/article-form",
+      params: id !== undefined ? { id: String(id) } : {},
+    } as Href);
+  };
+
+  const openRawContent = (id?: number) => {
+    router.push({
+      pathname: "/article-view",
       params: id !== undefined ? { id: String(id) } : {},
     } as Href);
   };
@@ -151,7 +171,7 @@ export default function ArticlesScreen() {
   const confirmDelete = (article: Article) => {
     Alert.alert(
       "Delete Article",
-      `Are you sure you want to delete ${article.title}? This action cannot be undone.`,
+      `Are you sure you want to delete ${article.title ?? article.url}? This action cannot be undone.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -163,6 +183,41 @@ export default function ArticlesScreen() {
     );
   };
 
+  const handleScrape = async (article: Article) => {
+    setScrapingId(article.id);
+    setNotice(null);
+
+    try {
+      // timeout dinaikkan: scraping satu halaman bisa sampai ~15 detik
+      const res = await api.post<{ data: ScrapeResult }>(
+        `/scraper/articles/${article.id}`,
+        null,
+        { timeout: 30000 },
+      );
+      const result = res.data.data;
+
+      if (result.status === "processed") {
+        setNotice({
+          type: "success",
+          text: `Scraping succeeded: ${article.title ?? article.url}`,
+        });
+      } else {
+        setNotice({
+          type: "error",
+          text: `Scraping failed: ${result.error ?? "unknown error"}`,
+        });
+      }
+      await load(1, false);
+    } catch (err: unknown) {
+      setNotice({
+        type: "error",
+        text: getErrorMessage(err, "Scraping request failed."),
+      });
+    } finally {
+      setScrapingId(null);
+    }
+  };
+
   const renderItem = ({ item }: { item: Article }) => {
     const s = STATUS_STYLE[item.status] ?? {
       label: "Unknown",
@@ -171,28 +226,46 @@ export default function ArticlesScreen() {
     };
     return (
       <View style={styles.card}>
-        <View style={styles.cardTop}>
-          <Text style={styles.source} numberOfLines={1}>
-            {item.sources.domain} · {item.sources.channel}
-          </Text>
-          <View style={[styles.badge, { backgroundColor: s.bg }]}>
-            <Text style={[styles.badgeText, { color: s.fg }]}>{s.label}</Text>
+        <View style={styles.cardBody}>
+          <View style={styles.cardTop}>
+            <Text style={styles.source} numberOfLines={1}>
+              {item.sources.domain} · {item.sources.channel}
+            </Text>
+            <View style={[styles.badge, { backgroundColor: s.bg }]}>
+              <Text style={[styles.badgeText, { color: s.fg }]}>{s.label}</Text>
+            </View>
           </View>
+
+          <Text style={styles.title} numberOfLines={2}>
+            {item.title}
+          </Text>
+          <Text style={styles.meta} numberOfLines={1}>
+            {item.url}
+          </Text>
+          <Text style={styles.meta} numberOfLines={1}>
+            {`${item.author ?? "-"} · ${
+              item.published_at
+                ? new Date(item.published_at).toLocaleDateString("id-ID")
+                : "-"
+            }`}
+          </Text>
         </View>
-        <Text style={styles.title} numberOfLines={2}>
-          {item.title}
-        </Text>
-        <Text style={styles.meta} numberOfLines={1}>
-          {item.url}
-        </Text>
-        <Text style={styles.meta} numberOfLines={1}>
-          {item.author ?? "-"} ·{" "}
-          {item.published_at
-            ? new Date(item.published_at).toLocaleDateString("id-ID")
-            : "-"}
-        </Text>
 
         <View style={styles.actions}>
+          <Pressable
+            onPress={() => openRawContent(item.id)}
+            style={[styles.actionBtn, styles.editBtn]}
+            hitSlop={6}
+          >
+            <Eye size={16} color="#475569" />
+          </Pressable>
+          <Pressable
+            onPress={() => handleScrape(item)}
+            style={[styles.actionBtn, styles.editBtn]}
+            hitSlop={6}
+          >
+            <RefreshCw size={16} color="#166ce3" />
+          </Pressable>
           <Pressable
             onPress={() => openForm(item.id)}
             style={[styles.actionBtn, styles.editBtn]}
@@ -286,6 +359,14 @@ export default function ArticlesScreen() {
           }
         />
       )}
+
+      {/* Tombol tambah article */}
+      <Pressable
+        onPress={() => openForm()}
+        style={({ pressed }) => [styles.fab, pressed && styles.fabPressed]}
+      >
+        <Plus size={26} color="#fff" />
+      </Pressable>
     </SafeAreaView>
   );
 }
@@ -325,17 +406,19 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     padding: 14,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
+    gap: 6, // hapus flexDirection: "row" dan alignItems: "center"
   },
-  cardBody: { flex: 1, gap: 6 },
+  cardBody: { gap: 6 },
   title: { fontSize: 15, fontWeight: "600", color: "#0f172a" },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   badge: { borderRadius: 999, paddingHorizontal: 8, paddingVertical: 3 },
   badgeText: { fontSize: 11, fontWeight: "600" },
   meta: { fontSize: 12, color: "#64748b" },
-  actions: { flexDirection: "row", gap: 8 },
+  actions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: 8,
+    marginTop: 6,
+  },
   actionBtn: {
     width: 36,
     height: 36,

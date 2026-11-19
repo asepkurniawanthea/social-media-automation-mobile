@@ -1,7 +1,3 @@
-// app/(app)/user-form.tsx
-// Halaman form tambah / ubah user.
-//   Tambah: /user-form
-//   Ubah:   /user-form?id=3
 import { api } from "@/lib/api";
 import { getErrorMessage } from "@/lib/errors";
 import axios from "axios";
